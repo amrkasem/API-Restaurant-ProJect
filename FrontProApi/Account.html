@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant API - Account Testing</title>
+    <link rel="stylesheet" href="Account.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🍽️ Restaurant Pro API</h1>
+        <p class="subtitle">Account Management Testing Interface</p>
+
+        <div class="api-selector">
+            <strong>🌐 Select API Endpoint:</strong>
+            <select id="apiEndpoint">
+                <option value="https://localhost:7201/api">HTTPS: https://localhost:7201/api</option>
+                <option value="http://localhost:5064/api">HTTP: http://localhost:5064/api</option>
+            </select>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('register')">Register</button>
+            <button class="tab" onclick="showTab('login')">Login</button>
+            <button class="tab" onclick="showTab('profile')">Profile</button>
+            <button class="tab" onclick="showTab('initialize')">Initialize System</button>
+        </div>
+
+        <!-- Register Tab -->
+        <div id="register" class="tab-content active">
+            <div class="info-box">
+                <strong>📝 Register New User</strong><br>
+                Create a new customer account with optional profile image upload.
+            </div>
+
+            <form id="registerForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>Username *</label>
+                    <input type="text" name="userName" required placeholder="Enter username">
+                </div>
+
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" name="email" required placeholder="user@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label>Password *</label>
+                    <input type="password" name="password" required placeholder="Min 6 characters">
+                </div>
+
+                <div class="form-group">
+                    <label>Confirm Password *</label>
+                    <input type="password" name="confirmPassword" required placeholder="Re-enter password">
+                </div>
+
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="tel" name="phoneNumber" placeholder="01234567890">
+                </div>
+
+                <div class="form-group">
+                    <label>Address</label>
+                    <textarea name="address" placeholder="Your address"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Profile Image</label>
+                    <input type="file" name="imageFile" accept="image/*">
+                </div>
+
+                <button type="submit">Register</button>
+            </form>
+
+            <div id="registerResponse" class="response"></div>
+        </div>
+
+        <!-- Login Tab -->
+        <div id="login" class="tab-content">
+            <div class="info-box">
+                <strong>🔐 User Login</strong><br>
+                Login to get your JWT authentication token.
+            </div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" name="email" required placeholder="user@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label>Password *</label>
+                    <input type="password" name="password" required placeholder="Your password">
+                </div>
+
+                <button type="submit">Login</button>
+            </form>
+
+            <div id="loginResponse" class="response"></div>
+        </div>
+
+        <!-- Profile Tab -->
+        <div id="profile" class="tab-content">
+            <div class="info-box">
+                <strong>👤 User Profile</strong><br>
+                Get current user profile information (requires authentication).
+            </div>
+
+            <button onclick="getProfile()">Get My Profile</button>
+            <button onclick="updateProfile()" style="margin-top: 10px; background: #28a745;">Update Profile</button>
+
+            <div id="profileResponse" class="response"></div>
+        </div>
+
+        <!-- Initialize Tab -->
+        <div id="initialize" class="tab-content">
+            <div class="info-box">
+                <strong>⚙️ Initialize System</strong><br>
+                Create default roles (Admin, Customer, Subscriber, Visitor) and default admin account.<br>
+                <strong>Default Admin:</strong> admin@restaurant.com / Admin@123
+            </div>
+
+            <button onclick="initializeSystem()">Initialize System</button>
+
+            <div id="initializeResponse" class="response"></div>
+        </div>
+    </div>
+<script src="Account.js"></script>
+
+</body>
+</html>
