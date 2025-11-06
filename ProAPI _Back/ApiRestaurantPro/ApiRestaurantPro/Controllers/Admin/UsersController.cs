@@ -1,10 +1,9 @@
 ﻿// Controllers/Admin/UsersController.cs
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
-using ApiRestaurantPro.Context;
 using ApiRestaurantPro.Models;
 using ApiRestaurantPro.DTOs;
+using ApiRestaurantPro.UnitWork;
 using Microsoft.AspNetCore.Authorization;
 
 namespace ApiRestaurantPro.Controllers.Admin
@@ -14,18 +13,18 @@ namespace ApiRestaurantPro.Controllers.Admin
     [Authorize(Roles = "Admin")]
     public class UsersController : ControllerBase
     {
-        private readonly MyDbContext _context;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly IWebHostEnvironment _environment;
 
         public UsersController(
-            MyDbContext context,
+            IUnitOfWork unitOfWork,
             UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole> roleManager,
             IWebHostEnvironment environment)
         {
-            _context = context;
+            _unitOfWork = unitOfWork;
             _userManager = userManager;
             _roleManager = roleManager;
             _environment = environment;
@@ -36,31 +35,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var users = await _userManager.Users
-                    .Where(u => !u.IsDeleted)
-                    .OrderByDescending(u => u.CreatedAt)
-                    .Select(u => new UserResponseDto
-                    {
-                        UserId = u.Id,
-                        UserName = u.UserName ?? "",
-                        Email = u.Email ?? "",
-                        PhoneNumber = u.PhoneNumber,
-                        Address = u.Address,
-                        ImageUrl = u.ImageUrl,
-                        CreatedAt = u.CreatedAt
-                    })
-                    .ToListAsync();
-
-                // Add roles for each user
-                foreach (var userDto in users)
-                {
-                    var user = await _userManager.FindByIdAsync(userDto.UserId);
-                    if (user != null)
-                    {
-                        var roles = await _userManager.GetRolesAsync(user);
-                        userDto.Roles = roles.ToList();
-                    }
-                }
+                var users = await _unitOfWork.AdminUsers.GetAllUsersAsync(_userManager);
 
                 return Ok(new ApiResponse<List<UserResponseDto>>
                 {
@@ -85,9 +60,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var user = await _userManager.Users
-                    .Include(u => u.Orders.Where(o => !o.IsDeleted))
-                    .FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
+                var user = await _unitOfWork.AdminUsers.GetUserByIdAsync(id, _userManager);
 
                 if (user == null)
                 {
@@ -98,25 +71,11 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var roles = await _userManager.GetRolesAsync(user);
-
-                var userDto = new UserResponseDto
-                {
-                    UserId = user.Id,
-                    UserName = user.UserName ?? "",
-                    Email = user.Email ?? "",
-                    PhoneNumber = user.PhoneNumber,
-                    Address = user.Address,
-                    ImageUrl = user.ImageUrl,
-                    Roles = roles.ToList(),
-                    CreatedAt = user.CreatedAt
-                };
-
                 return Ok(new ApiResponse<UserResponseDto>
                 {
                     Success = true,
                     Message = "User retrieved successfully",
-                    Data = userDto
+                    Data = user
                 });
             }
             catch (Exception ex)
@@ -146,8 +105,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                 }
 
                 // Check if email exists
-                var existingUser = await _userManager.FindByEmailAsync(dto.Email);
-                if (existingUser != null)
+                if (await _unitOfWork.AdminUsers.IsEmailExistsAsync(dto.Email))
                 {
                     return BadRequest(new ApiResponse<UserResponseDto>
                     {
@@ -157,8 +115,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                 }
 
                 // Check if username exists
-                var existingUserName = await _userManager.FindByNameAsync(dto.UserName);
-                if (existingUserName != null)
+                if (await _unitOfWork.AdminUsers.IsUsernameExistsAsync(dto.UserName))
                 {
                     return BadRequest(new ApiResponse<UserResponseDto>
                     {
@@ -199,7 +156,8 @@ namespace ApiRestaurantPro.Controllers.Admin
                     await _userManager.AddToRoleAsync(user, dto.Role);
 
                     // Create user cart and wishlist
-                    await CreateUserShoppingData(user);
+                    await _unitOfWork.AdminUsers.CreateUserShoppingDataAsync(user);
+                    await _unitOfWork.SaveChangesAsync();
 
                     var roles = await _userManager.GetRolesAsync(user);
 
@@ -265,6 +223,26 @@ namespace ApiRestaurantPro.Controllers.Admin
                     {
                         Success = false,
                         Message = "User not found"
+                    });
+                }
+
+                // Check if email exists (excluding current user)
+                if (await _unitOfWork.AdminUsers.IsEmailExistsAsync(dto.Email, id))
+                {
+                    return BadRequest(new ApiResponse<UserResponseDto>
+                    {
+                        Success = false,
+                        Message = "Email already exists"
+                    });
+                }
+
+                // Check if username exists (excluding current user)
+                if (await _unitOfWork.AdminUsers.IsUsernameExistsAsync(dto.UserName, id))
+                {
+                    return BadRequest(new ApiResponse<UserResponseDto>
+                    {
+                        Success = false,
+                        Message = "Username already exists"
                     });
                 }
 
@@ -354,26 +332,21 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var user = await _userManager.FindByIdAsync(id);
-                if (user == null)
-                {
-                    return NotFound(new ApiResponse<object>
-                    {
-                        Success = false,
-                        Message = "User not found"
-                    });
-                }
-
-                user.IsDeleted = true;
-                user.UpdatedAt = DateTime.UtcNow;
-                user.UpdatedBy = "Admin";
-
-                await _userManager.UpdateAsync(user);
+                await _unitOfWork.AdminUsers.SoftDeleteUserAsync(id);
+                await _unitOfWork.SaveChangesAsync();
 
                 return Ok(new ApiResponse<object>
                 {
                     Success = true,
                     Message = "User deleted successfully"
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "User not found"
                 });
             }
             catch (Exception ex)
@@ -392,43 +365,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var customerRole = await _roleManager.FindByNameAsync("Customer");
-                if (customerRole == null)
-                {
-                    return Ok(new ApiResponse<List<UserResponseDto>>
-                    {
-                        Success = true,
-                        Message = "No customers found",
-                        Data = new List<UserResponseDto>()
-                    });
-                }
-
-                var customerUserIds = await _context.UserRoles
-                    .Where(ur => ur.RoleId == customerRole.Id)
-                    .Select(ur => ur.UserId)
-                    .ToListAsync();
-
-                var customers = await _userManager.Users
-                    .Where(u => customerUserIds.Contains(u.Id) && !u.IsDeleted)
-                    .Include(u => u.Orders.Where(o => !o.IsDeleted))
-                    .OrderByDescending(u => u.CreatedAt)
-                    .Select(u => new UserResponseDto
-                    {
-                        UserId = u.Id,
-                        UserName = u.UserName ?? "",
-                        Email = u.Email ?? "",
-                        PhoneNumber = u.PhoneNumber,
-                        Address = u.Address,
-                        ImageUrl = u.ImageUrl,
-                        CreatedAt = u.CreatedAt
-                    })
-                    .ToListAsync();
-
-                // Add roles for each customer
-                foreach (var customer in customers)
-                {
-                    customer.Roles = new List<string> { "Customer" };
-                }
+                var customers = await _unitOfWork.AdminUsers.GetCustomersAsync(_userManager, _roleManager);
 
                 return Ok(new ApiResponse<List<UserResponseDto>>
                 {
@@ -478,29 +415,6 @@ namespace ApiRestaurantPro.Controllers.Admin
                     System.IO.File.Delete(oldImagePath);
                 }
             }
-        }
-
-        private async Task CreateUserShoppingData(ApplicationUser user)
-        {
-            // Create cart for user
-            var cart = new Cart
-            {
-                UserId = user.Id,
-                Total = 0,
-                CreatedBy = "System"
-            };
-
-            // Create wishlist for user
-            var wishlist = new Wishlist
-            {
-                UserId = user.Id,
-                TotalEstimatedPrice = 0,
-                CreatedBy = "System"
-            };
-
-            await _context.Carts.AddAsync(cart);
-            await _context.Wishlists.AddAsync(wishlist);
-            await _context.SaveChangesAsync();
         }
     }
 }

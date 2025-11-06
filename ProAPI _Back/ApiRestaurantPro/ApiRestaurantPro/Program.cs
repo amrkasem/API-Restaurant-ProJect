@@ -1,5 +1,8 @@
 using ApiRestaurantPro.Context;
 using ApiRestaurantPro.Models;
+using ApiRestaurantPro.Repository;
+using ApiRestaurantPro.Repository.Admin;
+using ApiRestaurantPro.UnitWork;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +75,16 @@ namespace ApiRestaurantPro
 
             builder.Services.AddDbContext<MyDbContext>(options =>
                 options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+
+            // Register Generic Repository
+           // builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+
+            // Register Specific Repositories
+            //builder.Services.AddScoped<IAdminCategoryRepository, AdminCategoryRepository>();
+
+            // Register Unit of Work
+            builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
             builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
             {

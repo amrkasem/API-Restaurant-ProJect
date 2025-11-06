@@ -1,9 +1,8 @@
 ﻿// Controllers/Admin/ProductsController.cs
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ApiRestaurantPro.Context;
 using ApiRestaurantPro.Models;
 using ApiRestaurantPro.DTOs;
+using ApiRestaurantPro.UnitWork;
 using Microsoft.AspNetCore.Authorization;
 
 namespace ApiRestaurantPro.Controllers.Admin
@@ -13,12 +12,12 @@ namespace ApiRestaurantPro.Controllers.Admin
     [Authorize(Roles = "Admin")]
     public class ProductsController : ControllerBase
     {
-        private readonly MyDbContext _context;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly IWebHostEnvironment _environment;
 
-        public ProductsController(MyDbContext context, IWebHostEnvironment environment)
+        public ProductsController(IUnitOfWork unitOfWork, IWebHostEnvironment environment)
         {
-            _context = context;
+            _unitOfWork = unitOfWork;
             _environment = environment;
         }
 
@@ -27,24 +26,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var products = await _context.MenuItems
-                    .Include(m => m.Category)
-                    .Where(m => !m.IsDeleted)
-                    .OrderByDescending(m => m.CreatedAt)
-                    .Select(m => new ProductResponseDto
-                    {
-                        Id = m.Id,
-                        Name = m.Name,
-                        Description = m.Description,
-                        Price = m.Price,
-                        IsAvailable = m.IsAvailable,
-                        PreparationTime = m.PreparationTime,
-                        ImageUrl = m.ImageUrl,
-                        CategoryId = m.CategoryId,
-                        CategoryName = m.Category.Name,
-                        CreatedAt = m.CreatedAt
-                    })
-                    .ToListAsync();
+                var products = await _unitOfWork.AdminProducts.GetAllProductsWithDetailsAsync();
 
                 return Ok(new ApiResponse<List<ProductResponseDto>>
                 {
@@ -69,9 +51,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var product = await _context.MenuItems
-                    .Include(m => m.Category)
-                    .FirstOrDefaultAsync(m => m.Id == id && !m.IsDeleted);
+                var product = await _unitOfWork.AdminProducts.GetProductWithDetailsAsync(id);
 
                 if (product == null)
                 {
@@ -82,25 +62,11 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var productDto = new ProductResponseDto
-                {
-                    Id = product.Id,
-                    Name = product.Name,
-                    Description = product.Description,
-                    Price = product.Price,
-                    IsAvailable = product.IsAvailable,
-                    PreparationTime = product.PreparationTime,
-                    ImageUrl = product.ImageUrl,
-                    CategoryId = product.CategoryId,
-                    CategoryName = product.Category.Name,
-                    CreatedAt = product.CreatedAt
-                };
-
                 return Ok(new ApiResponse<ProductResponseDto>
                 {
                     Success = true,
                     Message = "Product retrieved successfully",
-                    Data = productDto
+                    Data = product
                 });
             }
             catch (Exception ex)
@@ -129,11 +95,19 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                // Check if category exists
-                var category = await _context.Categories
-                    .FirstOrDefaultAsync(c => c.Id == dto.CategoryId && !c.IsDeleted);
+                // Check if product name already exists
+                if (await _unitOfWork.AdminProducts.IsProductNameExistsAsync(dto.Name))
+                {
+                    return BadRequest(new ApiResponse<ProductResponseDto>
+                    {
+                        Success = false,
+                        Message = "Product name already exists"
+                    });
+                }
 
-                if (category == null)
+                // Check if category exists
+                var category = await _unitOfWork.AdminCategories.GetByIdAsync(dto.CategoryId);
+                if (category == null || category.IsDeleted)
                 {
                     return BadRequest(new ApiResponse<ProductResponseDto>
                     {
@@ -148,7 +122,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                     category.IsActive = true;
                     category.UpdatedAt = DateTime.UtcNow;
                     category.UpdatedBy = "Admin";
-                    _context.Categories.Update(category);
+                    _unitOfWork.AdminCategories.Update(category);
                 }
 
                 string imageUrl = await SaveImage(dto.ImageFile, "products");
@@ -166,8 +140,8 @@ namespace ApiRestaurantPro.Controllers.Admin
                     CreatedBy = "Admin"
                 };
 
-                _context.MenuItems.Add(product);
-                await _context.SaveChangesAsync();
+                await _unitOfWork.AdminProducts.AddAsync(product);
+                await _unitOfWork.SaveChangesAsync();
 
                 var productResponse = new ProductResponseDto
                 {
@@ -216,7 +190,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var product = await _context.MenuItems.FindAsync(id);
+                var product = await _unitOfWork.AdminProducts.GetByIdAsync(id);
                 if (product == null || product.IsDeleted)
                 {
                     return NotFound(new ApiResponse<ProductResponseDto>
@@ -226,11 +200,19 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                // Check if category exists
-                var category = await _context.Categories
-                    .FirstOrDefaultAsync(c => c.Id == dto.CategoryId && !c.IsDeleted);
+                // Check for duplicate name (excluding current product)
+                if (await _unitOfWork.AdminProducts.IsProductNameExistsAsync(dto.Name, id))
+                {
+                    return BadRequest(new ApiResponse<ProductResponseDto>
+                    {
+                        Success = false,
+                        Message = "Product name already exists"
+                    });
+                }
 
-                if (category == null)
+                // Check if category exists
+                var category = await _unitOfWork.AdminCategories.GetByIdAsync(dto.CategoryId);
+                if (category == null || category.IsDeleted)
                 {
                     return BadRequest(new ApiResponse<ProductResponseDto>
                     {
@@ -254,22 +236,10 @@ namespace ApiRestaurantPro.Controllers.Admin
                     product.ImageUrl = await SaveImage(dto.ImageFile, "products");
                 }
 
-                _context.MenuItems.Update(product);
-                await _context.SaveChangesAsync();
+                _unitOfWork.AdminProducts.Update(product);
+                await _unitOfWork.SaveChangesAsync();
 
-                var productResponse = new ProductResponseDto
-                {
-                    Id = product.Id,
-                    Name = product.Name,
-                    Description = product.Description,
-                    Price = product.Price,
-                    IsAvailable = product.IsAvailable,
-                    PreparationTime = product.PreparationTime,
-                    ImageUrl = product.ImageUrl,
-                    CategoryId = product.CategoryId,
-                    CategoryName = category.Name,
-                    CreatedAt = product.CreatedAt
-                };
+                var productResponse = await _unitOfWork.AdminProducts.GetProductWithDetailsAsync(id);
 
                 return Ok(new ApiResponse<ProductResponseDto>
                 {
@@ -294,47 +264,21 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var product = await _context.MenuItems
-                    .Include(m => m.Category)
-                    .FirstOrDefaultAsync(m => m.Id == id && !m.IsDeleted);
-
-                if (product == null)
-                {
-                    return NotFound(new ApiResponse<object>
-                    {
-                        Success = false,
-                        Message = "Product not found"
-                    });
-                }
-
-                // Check if this is the last product in the category
-                var category = product.Category;
-                if (category != null)
-                {
-                    var productCount = await _context.MenuItems
-                        .CountAsync(m => m.CategoryId == category.Id && !m.IsDeleted);
-
-                    if (productCount == 1) // This is the last product
-                    {
-                        category.IsActive = false;
-                        category.UpdatedAt = DateTime.UtcNow;
-                        category.UpdatedBy = "Admin";
-                        _context.Categories.Update(category);
-                    }
-                }
-
-                // Soft delete product
-                product.IsDeleted = true;
-                product.UpdatedAt = DateTime.UtcNow;
-                product.UpdatedBy = "Admin";
-
-                _context.MenuItems.Update(product);
-                await _context.SaveChangesAsync();
+                await _unitOfWork.AdminProducts.SoftDeleteProductAsync(id, "Admin");
+                await _unitOfWork.SaveChangesAsync();
 
                 return Ok(new ApiResponse<object>
                 {
                     Success = true,
                     Message = "Product deleted successfully"
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Product not found"
                 });
             }
             catch (Exception ex)

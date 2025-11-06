@@ -1,10 +1,10 @@
 ﻿// Controllers/Admin/OrdersController.cs
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ApiRestaurantPro.Context;
-using ApiRestaurantPro.Models;
 using ApiRestaurantPro.DTOs;
+using ApiRestaurantPro.Models;
+using ApiRestaurantPro.Models.ENUMS;
+using ApiRestaurantPro.UnitWork;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 
 namespace ApiRestaurantPro.Controllers.Admin
 {
@@ -13,11 +13,11 @@ namespace ApiRestaurantPro.Controllers.Admin
     [Authorize(Roles = "Admin")]
     public class OrdersController : ControllerBase
     {
-        private readonly MyDbContext _context;
+        private readonly IUnitOfWork _unitOfWork;
 
-        public OrdersController(MyDbContext context)
+        public OrdersController(IUnitOfWork unitOfWork)
         {
-            _context = context;
+            _unitOfWork = unitOfWork;
         }
 
         [HttpGet]
@@ -25,41 +25,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var orders = await _context.Orders
-                    .Include(o => o.User)
-                    .Include(o => o.OrderItems)
-                        .ThenInclude(oi => oi.MenuItem)
-                    .Where(o => !o.IsDeleted)
-                    .OrderByDescending(o => o.CreatedAt)
-                    .Select(o => new OrderResponseDto
-                    {
-                        Id = o.Id,
-                        CustomerName = o.CustomerName,
-                        PhoneNumber = o.PhoneNumber,
-                        OrderType = o.OrderType,
-                        DeliveryAddress = o.DeliveryAddress,
-                        Subtotal = o.Subtotal,
-                        Tax = o.Tax,
-                        Discount = o.Discount,
-                        Total = o.Total,
-                        Status = o.Status,
-                        PaymentMethod = o.PaymentMethod,
-                        EstimatedDeliveryTime = o.EstimatedDeliveryTime,
-                        Notes = o.Notes,
-                        CreatedAt = o.CreatedAt,
-                        UserId = o.UserId,
-                        UserName = o.User.UserName ?? "Unknown",
-                        OrderItems = o.OrderItems.Select(oi => new OrderItemResponseDto
-                        {
-                            MenuItemId = oi.MenuItemId,
-                            MenuItemName = oi.MenuItem.Name,
-                            Quantity = oi.Quantity,
-                            Price = oi.Price,
-                            Subtotal = oi.Subtotal,
-                            SpecialInstructions = oi.SpecialInstructions
-                        }).ToList()
-                    })
-                    .ToListAsync();
+                var orders = await _unitOfWork.AdminOrders.GetAllOrdersWithDetailsAsync();
 
                 return Ok(new ApiResponse<List<OrderResponseDto>>
                 {
@@ -84,11 +50,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var order = await _context.Orders
-                    .Include(o => o.User)
-                    .Include(o => o.OrderItems)
-                        .ThenInclude(oi => oi.MenuItem)
-                    .FirstOrDefaultAsync(o => o.Id == id && !o.IsDeleted);
+                var order = await _unitOfWork.AdminOrders.GetOrderWithDetailsAsync(id);
 
                 if (order == null)
                 {
@@ -99,40 +61,11 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var orderDto = new OrderResponseDto
-                {
-                    Id = order.Id,
-                    CustomerName = order.CustomerName,
-                    PhoneNumber = order.PhoneNumber,
-                    OrderType = order.OrderType,
-                    DeliveryAddress = order.DeliveryAddress,
-                    Subtotal = order.Subtotal,
-                    Tax = order.Tax,
-                    Discount = order.Discount,
-                    Total = order.Total,
-                    Status = order.Status,
-                    PaymentMethod = order.PaymentMethod,
-                    EstimatedDeliveryTime = order.EstimatedDeliveryTime,
-                    Notes = order.Notes,
-                    CreatedAt = order.CreatedAt,
-                    UserId = order.UserId,
-                    UserName = order.User.UserName ?? "Unknown",
-                    OrderItems = order.OrderItems.Select(oi => new OrderItemResponseDto
-                    {
-                        MenuItemId = oi.MenuItemId,
-                        MenuItemName = oi.MenuItem.Name,
-                        Quantity = oi.Quantity,
-                        Price = oi.Price,
-                        Subtotal = oi.Subtotal,
-                        SpecialInstructions = oi.SpecialInstructions
-                    }).ToList()
-                };
-
                 return Ok(new ApiResponse<OrderResponseDto>
                 {
                     Success = true,
                     Message = "Order retrieved successfully",
-                    Data = orderDto
+                    Data = order
                 });
             }
             catch (Exception ex)
@@ -141,6 +74,56 @@ namespace ApiRestaurantPro.Controllers.Admin
                 {
                     Success = false,
                     Message = "Error retrieving order",
+                    Error = ex.Message
+                });
+            }
+        }
+
+        [HttpGet("user/{userId}")]
+        public async Task<ActionResult<ApiResponse<List<OrderResponseDto>>>> GetOrdersByUser(string userId)
+        {
+            try
+            {
+                var orders = await _unitOfWork.AdminOrders.GetOrdersByUserIdAsync(userId);
+
+                return Ok(new ApiResponse<List<OrderResponseDto>>
+                {
+                    Success = true,
+                    Message = "User orders retrieved successfully",
+                    Data = orders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ApiResponse<List<OrderResponseDto>>
+                {
+                    Success = false,
+                    Message = "Error retrieving user orders",
+                    Error = ex.Message
+                });
+            }
+        }
+
+        [HttpGet("status/{status}")]
+        public async Task<ActionResult<ApiResponse<List<OrderResponseDto>>>> GetOrdersByStatus(OrderStatus status)
+        {
+            try
+            {
+                var orders = await _unitOfWork.AdminOrders.GetOrdersByStatusAsync(status);
+
+                return Ok(new ApiResponse<List<OrderResponseDto>>
+                {
+                    Success = true,
+                    Message = $"Orders with status '{status}' retrieved successfully",
+                    Data = orders
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ApiResponse<List<OrderResponseDto>>
+                {
+                    Success = false,
+                    Message = "Error retrieving orders by status",
                     Error = ex.Message
                 });
             }
@@ -160,74 +143,25 @@ namespace ApiRestaurantPro.Controllers.Admin
                         Error = string.Join("; ", ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)))
                     });
                 }
+                
+                await _unitOfWork.AdminOrders.UpdateOrderStatusAsync(id, dto.NewStatus, dto.Notes);
+                await _unitOfWork.SaveChangesAsync();
 
-                var order = await _context.Orders.FindAsync(id);
-                if (order == null || order.IsDeleted)
-                {
-                    return NotFound(new ApiResponse<OrderResponseDto>
-                    {
-                        Success = false,
-                        Message = "Order not found"
-                    });
-                }
-
-                var oldStatus = order.Status;
-                order.Status = dto.NewStatus;
-                order.UpdatedAt = DateTime.UtcNow;
-
-                // Add status change note
-                var statusNote = $"\n[{DateTime.UtcNow:yyyy-MM-dd HH:mm}] Status changed from {oldStatus} to {dto.NewStatus}";
-                if (!string.IsNullOrEmpty(dto.Notes))
-                {
-                    statusNote += $": {dto.Notes}";
-                }
-
-                order.Notes += statusNote;
-
-                _context.Orders.Update(order);
-                await _context.SaveChangesAsync();
-
-                // Get updated order with related data
-                var updatedOrder = await _context.Orders
-                    .Include(o => o.User)
-                    .Include(o => o.OrderItems)
-                        .ThenInclude(oi => oi.MenuItem)
-                    .FirstOrDefaultAsync(o => o.Id == id);
-
-                var orderDto = new OrderResponseDto
-                {
-                    Id = updatedOrder!.Id,
-                    CustomerName = updatedOrder.CustomerName,
-                    PhoneNumber = updatedOrder.PhoneNumber,
-                    OrderType = updatedOrder.OrderType,
-                    DeliveryAddress = updatedOrder.DeliveryAddress,
-                    Subtotal = updatedOrder.Subtotal,
-                    Tax = updatedOrder.Tax,
-                    Discount = updatedOrder.Discount,
-                    Total = updatedOrder.Total,
-                    Status = updatedOrder.Status,
-                    PaymentMethod = updatedOrder.PaymentMethod,
-                    EstimatedDeliveryTime = updatedOrder.EstimatedDeliveryTime,
-                    Notes = updatedOrder.Notes,
-                    CreatedAt = updatedOrder.CreatedAt,
-                    UserId = updatedOrder.UserId,
-                    UserName = updatedOrder.User?.UserName ?? "Unknown",
-                    OrderItems = updatedOrder.OrderItems.Select(oi => new OrderItemResponseDto
-                    {
-                        MenuItemId = oi.MenuItemId,
-                        MenuItemName = oi.MenuItem.Name,
-                        Quantity = oi.Quantity,
-                        Price = oi.Price,
-                        Subtotal = oi.Subtotal,
-                        SpecialInstructions = oi.SpecialInstructions
-                    }).ToList()
-                };
+                var updatedOrder = await _unitOfWork.AdminOrders.GetOrderWithDetailsAsync(id);
 
                 return Ok(new ApiResponse<OrderResponseDto>
                 {
                     Success = true,
                     Message = "Order status updated successfully",
-                    Data = orderDto
+                    Data = updatedOrder
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(new ApiResponse<OrderResponseDto>
+                {
+                    Success = false,
+                    Message = "Order not found"
                 });
             }
             catch (Exception ex)
@@ -246,38 +180,21 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var order = await _context.Orders
-                    .Include(o => o.OrderItems)
-                    .FirstOrDefaultAsync(o => o.Id == id && !o.IsDeleted);
-
-                if (order == null)
-                {
-                    return NotFound(new ApiResponse<object>
-                    {
-                        Success = false,
-                        Message = "Order not found"
-                    });
-                }
-
-                // Soft delete order
-                order.IsDeleted = true;
-                order.UpdatedAt = DateTime.UtcNow;
-                order.UpdatedBy = "Admin";
-
-                // Soft delete order items
-                foreach (var orderItem in order.OrderItems.Where(oi => !oi.IsDeleted))
-                {
-                    orderItem.IsDeleted = true;
-                    orderItem.UpdatedAt = DateTime.UtcNow;
-                    orderItem.UpdatedBy = "Admin";
-                }
-
-                await _context.SaveChangesAsync();
+                await _unitOfWork.AdminOrders.SoftDeleteOrderWithItemsAsync(id, "Admin");
+                await _unitOfWork.SaveChangesAsync();
 
                 return Ok(new ApiResponse<object>
                 {
                     Success = true,
                     Message = "Order deleted successfully"
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Order not found"
                 });
             }
             catch (Exception ex)
@@ -286,6 +203,56 @@ namespace ApiRestaurantPro.Controllers.Admin
                 {
                     Success = false,
                     Message = "Error deleting order",
+                    Error = ex.Message
+                });
+            }
+        }
+
+        [HttpGet("statistics/revenue")]
+        public async Task<ActionResult<ApiResponse<decimal>>> GetTotalRevenue()
+        {
+            try
+            {
+                var revenue = await _unitOfWork.AdminOrders.GetTotalRevenueAsync();
+
+                return Ok(new ApiResponse<decimal>
+                {
+                    Success = true,
+                    Message = "Total revenue retrieved successfully",
+                    Data = revenue
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ApiResponse<decimal>
+                {
+                    Success = false,
+                    Message = "Error retrieving revenue",
+                    Error = ex.Message
+                });
+            }
+        }
+
+        [HttpGet("statistics/count/{status}")]
+        public async Task<ActionResult<ApiResponse<int>>> GetOrdersCountByStatus(OrderStatus status)
+        {
+            try
+            {
+                var count = await _unitOfWork.AdminOrders.GetOrdersCountByStatusAsync(status);
+
+                return Ok(new ApiResponse<int>
+                {
+                    Success = true,
+                    Message = $"Count of '{status}' orders retrieved successfully",
+                    Data = count
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ApiResponse<int>
+                {
+                    Success = false,
+                    Message = "Error retrieving orders count",
                     Error = ex.Message
                 });
             }

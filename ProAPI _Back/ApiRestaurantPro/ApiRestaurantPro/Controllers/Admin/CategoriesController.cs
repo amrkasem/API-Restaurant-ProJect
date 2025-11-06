@@ -1,9 +1,8 @@
 ﻿// Controllers/Admin/CategoriesController.cs
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ApiRestaurantPro.Context;
 using ApiRestaurantPro.Models;
 using ApiRestaurantPro.DTOs;
+using ApiRestaurantPro.UnitWork;
 using Microsoft.AspNetCore.Authorization;
 
 namespace ApiRestaurantPro.Controllers.Admin
@@ -13,12 +12,12 @@ namespace ApiRestaurantPro.Controllers.Admin
     [Authorize(Roles = "Admin")]
     public class CategoriesController : ControllerBase
     {
-        private readonly MyDbContext _context;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly IWebHostEnvironment _environment;
 
-        public CategoriesController(MyDbContext context, IWebHostEnvironment environment)
+        public CategoriesController(IUnitOfWork unitOfWork, IWebHostEnvironment environment)
         {
-            _context = context;
+            _unitOfWork = unitOfWork;
             _environment = environment;
         }
 
@@ -27,21 +26,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var categories = await _context.Categories
-                    .Include(c => c.MenuItems)
-                    .Where(c => !c.IsDeleted)
-                    .OrderByDescending(c => c.CreatedAt)
-                    .Select(c => new CategoryResponseDto
-                    {
-                        Id = c.Id,
-                        Name = c.Name,
-                        Description = c.Description,
-                        ImageUrl = c.ImageUrl,
-                        IsActive = c.IsActive,
-                        MenuItemsCount = c.MenuItems.Count(m => !m.IsDeleted),
-                        CreatedAt = c.CreatedAt
-                    })
-                    .ToListAsync();
+                var categories = await _unitOfWork.AdminCategories.GetAllCategoriesWithDetailsAsync();
 
                 return Ok(new ApiResponse<List<CategoryResponseDto>>
                 {
@@ -66,9 +51,7 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var category = await _context.Categories
-                    .Include(c => c.MenuItems)
-                    .FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
+                var category = await _unitOfWork.AdminCategories.GetCategoryWithDetailsAsync(id);
 
                 if (category == null)
                 {
@@ -79,22 +62,11 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var categoryDto = new CategoryResponseDto
-                {
-                    Id = category.Id,
-                    Name = category.Name,
-                    Description = category.Description,
-                    ImageUrl = category.ImageUrl,
-                    IsActive = category.IsActive,
-                    MenuItemsCount = category.MenuItems.Count(m => !m.IsDeleted),
-                    CreatedAt = category.CreatedAt
-                };
-
                 return Ok(new ApiResponse<CategoryResponseDto>
                 {
                     Success = true,
                     Message = "Category retrieved successfully",
-                    Data = categoryDto
+                    Data = category
                 });
             }
             catch (Exception ex)
@@ -124,10 +96,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                 }
 
                 // Check for duplicate name
-                var existingCategory = await _context.Categories
-                    .FirstOrDefaultAsync(c => c.Name.ToLower() == dto.Name.ToLower() && !c.IsDeleted);
-
-                if (existingCategory != null)
+                if (await _unitOfWork.AdminCategories.IsCategoryNameExistsAsync(dto.Name))
                 {
                     return BadRequest(new ApiResponse<CategoryResponseDto>
                     {
@@ -148,8 +117,8 @@ namespace ApiRestaurantPro.Controllers.Admin
                     CreatedBy = "Admin"
                 };
 
-                _context.Categories.Add(category);
-                await _context.SaveChangesAsync();
+                await _unitOfWork.AdminCategories.AddAsync(category);
+                await _unitOfWork.SaveChangesAsync();
 
                 var categoryResponse = new CategoryResponseDto
                 {
@@ -195,7 +164,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                     });
                 }
 
-                var category = await _context.Categories.FindAsync(id);
+                var category = await _unitOfWork.AdminCategories.GetByIdAsync(id);
                 if (category == null || category.IsDeleted)
                 {
                     return NotFound(new ApiResponse<CategoryResponseDto>
@@ -206,12 +175,7 @@ namespace ApiRestaurantPro.Controllers.Admin
                 }
 
                 // Check for duplicate name (excluding current category)
-                var existingCategory = await _context.Categories
-                    .FirstOrDefaultAsync(c => c.Name.ToLower() == dto.Name.ToLower()
-                                           && c.Id != id
-                                           && !c.IsDeleted);
-
-                if (existingCategory != null)
+                if (await _unitOfWork.AdminCategories.IsCategoryNameExistsAsync(dto.Name, id))
                 {
                     return BadRequest(new ApiResponse<CategoryResponseDto>
                     {
@@ -232,19 +196,10 @@ namespace ApiRestaurantPro.Controllers.Admin
                     category.ImageUrl = await SaveImage(dto.ImageFile, "categories");
                 }
 
-                _context.Categories.Update(category);
-                await _context.SaveChangesAsync();
+                _unitOfWork.AdminCategories.Update(category);
+                await _unitOfWork.SaveChangesAsync();
 
-                var categoryResponse = new CategoryResponseDto
-                {
-                    Id = category.Id,
-                    Name = category.Name,
-                    Description = category.Description,
-                    ImageUrl = category.ImageUrl,
-                    IsActive = category.IsActive,
-                    MenuItemsCount = await _context.MenuItems.CountAsync(m => m.CategoryId == id && !m.IsDeleted),
-                    CreatedAt = category.CreatedAt
-                };
+                var categoryResponse = await _unitOfWork.AdminCategories.GetCategoryWithDetailsAsync(id);
 
                 return Ok(new ApiResponse<CategoryResponseDto>
                 {
@@ -269,38 +224,21 @@ namespace ApiRestaurantPro.Controllers.Admin
         {
             try
             {
-                var category = await _context.Categories
-                    .Include(c => c.MenuItems)
-                    .FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
-
-                if (category == null)
-                {
-                    return NotFound(new ApiResponse<object>
-                    {
-                        Success = false,
-                        Message = "Category not found"
-                    });
-                }
-
-                // Soft delete category
-                category.IsDeleted = true;
-                category.UpdatedAt = DateTime.UtcNow;
-                category.UpdatedBy = "Admin";
-
-                // Soft delete related products
-                foreach (var menuItem in category.MenuItems.Where(m => !m.IsDeleted))
-                {
-                    menuItem.IsDeleted = true;
-                    menuItem.UpdatedAt = DateTime.UtcNow;
-                    menuItem.UpdatedBy = "Admin";
-                }
-
-                await _context.SaveChangesAsync();
+                await _unitOfWork.AdminCategories.SoftDeleteCategoryWithMenuItemsAsync(id, "Admin");
+                await _unitOfWork.SaveChangesAsync();
 
                 return Ok(new ApiResponse<object>
                 {
                     Success = true,
                     Message = "Category deleted successfully"
+                });
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = "Category not found"
                 });
             }
             catch (Exception ex)
